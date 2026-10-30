@@ -1,0 +1,50 @@
+name: Terraform CI
+
+on:
+  push:
+    branches: [main, git_actions]
+  pull_request:
+    branches: [main, git_actions]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_EC2_METADATA_DISABLED: "true"
+
+jobs:
+  validate:
+    name: Terraform checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.17.0
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      - name: Initialize providers without backend
+        run: terraform init -backend=false -input=false -lockfile=readonly -no-color
+
+      - name: Validate configuration
+        run: terraform validate -no-color
