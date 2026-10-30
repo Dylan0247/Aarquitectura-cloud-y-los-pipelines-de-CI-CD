@@ -48,3 +48,8 @@ jobs:
 
       - name: Validate configuration
         run: terraform validate -no-color
+
+      - name: Check Jenkins deployment helpers
+        run: |
+          bash -n scripts/jenkins_terraform.sh
+          python3 -m unittest discover -s tests -p 'test_*.py'

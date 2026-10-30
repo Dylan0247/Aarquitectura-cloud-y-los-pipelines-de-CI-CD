@@ -31,3 +31,8 @@ __pycache__/
 .npmrc
 .pypirc
 .netrc
+
+# Ejecuciones privadas de Jenkins y backend local compartido con WSL
+.jenkins-run/
+backend.local.tf
+*.tfbackend

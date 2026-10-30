@@ -2,17 +2,19 @@
 
 Laboratorio con Terraform: un ALB reparte peticiones HTTP entre EC2 con Amazon Linux 2023 y Apache, gestionadas por un Auto Scaling Group, con RDS PostgreSQL privada.
 
-Versión personal de una práctica de instituto. Incluye integración continua de Terraform con GitHub Actions. El despliegue con Jenkins se incorporará en una siguiente fase.
+Versión personal de una práctica de instituto. Incluye integración continua de Terraform con GitHub Actions. Incluye un pipeline de Jenkins para planificar y aplicar en AWS con aprobación manual y estado remoto compartido.
 
 ## Arquitectura
 
-![Arquitectura AWS](docs/assets/arquitectura.png)
+![Arquitectura AWS con GitHub Actions para CI y Jenkins pendiente para despliegue](docs/assets/arquitectura.png)
 
 [Editar en draw.io](<Arquitetura AWS.drawio>)
 
+El diagrama usa iconos AWS de colores, cajas por zona y conexiones simplificadas. La franja superior muestra el pipeline: **GitHub → GitHub Actions → resultado de validación del commit**. GitHub Actions valida Terraform; el bloque de **Jenkins** representa el flujo de despliegue diseñado: comprobar CI, generar el plan, revisarlo, aprobar y aplicar. El diagrama muestra la arquitectura objetivo; el estado de implementación se detalla en la sección de Jenkins. Ambos diagramas incluyen este flujo; Jenkins apunta a la API de AWS mediante Terraform, sin fijar todavía dónde se alojará el agente.
+
 Tres subredes públicas y dos privadas. El ALB y el ASG utilizan dos zonas, con **2 EC2** deseadas (mínimo 1, máximo 3). Recorrido: **Internet → ALB:80 → EC2:80**. Las EC2 solo aceptan HTTP desde el ALB y SSH desde tu IPv4 `/32`; RDS acepta PostgreSQL desde las EC2.
 
-El diagrama refleja la configuración de Terraform: RDS privada en un grupo de dos subredes y S3 privado fuera de la VPC. [Versión con iconos AWS 2017](<Arquitetura AWS 2017.drawio>).
+El diagrama refleja la configuración de Terraform: RDS privada en un grupo de dos subredes y S3 privado fuera de la VPC. [Versión con iconos AWS 2017](<Arquitetura AWS 2017.drawio>) · [Vista PNG](docs/assets/arquitectura-2017.png).
 
 ## Integración continua con GitHub Actions
 
@@ -33,6 +35,7 @@ flowchart LR
 | `terraform fmt -check -recursive` | Formato del código Terraform; falla si necesita cambios. |
 | `terraform init -backend=false -input=false -lockfile=readonly` | Instala el proveedor fijado en `.terraform.lock.hcl`, sin inicializar un backend ni modificar el lockfile. |
 | `terraform validate` | Coherencia de la configuración y argumentos según el esquema del proveedor. |
+| `bash -n` y pruebas Python | Sintaxis del script de despliegue y bloqueos del pipeline de Jenkins, sin acceso a AWS. |
 
 El runner usa permisos `contents: read`, no conserva las credenciales del checkout y cancela ejecuciones anteriores del mismo workflow y referencia. Las acciones están fijadas por SHA; [Dependabot](.github/dependabot.yml) propone sus actualizaciones semanalmente. La versión de Terraform se actualiza manualmente en el workflow.
 
@@ -52,13 +55,19 @@ terraform validate
 
 Si falla el formato, ejecuta `terraform fmt -recursive`, revisa el diff y repite la comprobación. Puedes configurar `Terraform checks` como check obligatorio en las reglas de protección de `main` tras su primera ejecución; esa protección no la crea este archivo.
 
-### Siguiente fase: despliegue con Jenkins
+### Despliegue con Jenkins
 
-La separación prevista es **GitHub Actions para CI** y **Jenkins para despliegue**. Jenkins todavía no está configurado: no hay `Jenkinsfile` ni conexión automática entre ambos sistemas. El flujo previsto será comprobar el resultado de CI del commit elegido, generar y revisar su plan, aprobar y aplicar ese mismo plan en AWS.
+El [Jenkinsfile](Jenkinsfile) separa validación y despliegue. Sin `DEPLOY` solo ejecuta las comprobaciones locales; al activarlo verifica que GitHub Actions haya aprobado el mismo commit, comprueba la cuenta AWS, genera un plan, pide aprobación y aplica ese archivo. Los planes no se publican como artefactos y el workspace se limpia al terminar.
 
-El proyecto todavía utiliza estado local. Antes de desplegar desde un agente Jenkins hay que preparar un backend remoto privado con bloqueo y migrar el estado existente de forma controlada. El bucket de `s3.tf` almacena el HTML de ejemplo; no es un backend de Terraform. No deben desplegar WSL y Jenkins con estados independientes sobre los mismos recursos.
+La instalación local se prepara con Docker, Terraform y los plugins necesarios:
 
-También será necesario configurar las credenciales AWS en Jenkins, las variables de RDS y SSH, la aprobación de despliegues y la exclusión de ejecuciones simultáneas. Las credenciales temporales de Academy caducan; el agente no hereda automáticamente `~/.aws/credentials` ni las claves de tu WSL. El estado y los planes pueden contener datos sensibles y deben conservarse en almacenamiento privado con acceso controlado.
+```bash
+docker compose -f jenkins/compose.yaml up -d --build
+```
+
+Abre [Jenkins local](http://localhost:8080). Sigue la [guía de Jenkins](docs/jenkins.md) para desbloquearlo, crear el job, cargar las credenciales de Academy y configurar el backend S3 con bloqueo. El pipeline está implementado en el repositorio; el despliegue real requiere completar esos pasos y disponer de una CI correcta del commit publicado.
+
+El backend de la raíz se conserva local hasta la migración explícita. Jenkins trabaja con una copia temporal y un backend S3. Si ya hay recursos creados desde WSL, migra primero su estado real al mismo bucket y clave: no uses estados independientes. El bucket de `s3.tf` almacena HTML y no es el backend.
 
 ## Paso a paso en WSL
 
