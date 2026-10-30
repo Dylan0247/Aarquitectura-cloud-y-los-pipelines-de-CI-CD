@@ -2,7 +2,7 @@
 
 Laboratorio con Terraform: un ALB reparte peticiones HTTP entre EC2 con Amazon Linux 2023 y Apache, gestionadas por un Auto Scaling Group, con RDS PostgreSQL privada.
 
-Versión personal de una práctica de instituto. GitHub Actions y Jenkins se incorporarán a esta versión; todavía no están configurados.
+Versión personal de una práctica de instituto. Incluye integración continua de Terraform con GitHub Actions. El despliegue con Jenkins se incorporará en una siguiente fase.
 
 ## Arquitectura
 
@@ -13,6 +13,52 @@ Versión personal de una práctica de instituto. GitHub Actions y Jenkins se inc
 Tres subredes públicas y dos privadas. El ALB y el ASG utilizan dos zonas, con **2 EC2** deseadas (mínimo 1, máximo 3). Recorrido: **Internet → ALB:80 → EC2:80**. Las EC2 solo aceptan HTTP desde el ALB y SSH desde tu IPv4 `/32`; RDS acepta PostgreSQL desde las EC2.
 
 El diagrama refleja la configuración de Terraform: RDS privada en un grupo de dos subredes y S3 privado fuera de la VPC. [Versión con iconos AWS 2017](<Arquitetura AWS 2017.drawio>).
+
+## Integración continua con GitHub Actions
+
+El workflow [Terraform CI](.github/workflows/terraform-ci.yml) comprueba el proyecto en cada push a `git_actions` o `main`, y en pull requests dirigidas a esas ramas. Se ejecuta también para cambios de documentación, de modo que el check no queda pendiente por filtros de rutas.
+
+```mermaid
+flowchart LR
+    A[Push o pull request] --> B[Runner Ubuntu]
+    B --> C[Terraform 1.17.0]
+    C --> D[fmt -check]
+    D --> E[init sin backend]
+    E --> F[validate]
+    F --> G[Resultado en GitHub Actions]
+```
+
+| Paso | Qué comprueba |
+| --- | --- |
+| `terraform fmt -check -recursive` | Formato del código Terraform; falla si necesita cambios. |
+| `terraform init -backend=false -input=false -lockfile=readonly` | Instala el proveedor fijado en `.terraform.lock.hcl`, sin inicializar un backend ni modificar el lockfile. |
+| `terraform validate` | Coherencia de la configuración y argumentos según el esquema del proveedor. |
+
+El runner usa permisos `contents: read`, no conserva las credenciales del checkout y cancela ejecuciones anteriores del mismo workflow y referencia. Las acciones están fijadas por SHA; [Dependabot](.github/dependabot.yml) propone sus actualizaciones semanalmente. La versión de Terraform se actualiza manualmente en el workflow.
+
+Esta CI no necesita secrets de AWS, contraseña de RDS ni clave SSH. Descarga Terraform y el proveedor por Internet, pero no ejecuta `plan`, `apply` o `destroy`. Un check correcto no demuestra que las cuotas, los permisos, las credenciales o los valores elegidos permitan desplegar en AWS.
+
+### Probar la rama
+
+Una vez publicado el workflow en `git_actions`, abre **Actions → Terraform CI** para consultar el resultado del push. Las pull requests hacia `main` ejecutan el mismo check. La ejecución manual con **Run workflow** estará disponible cuando el workflow exista en la rama predeterminada.
+
+Para reproducir los pasos en WSL, desde la raíz del repositorio:
+
+```bash
+terraform fmt -check -recursive
+terraform init -backend=false -input=false -lockfile=readonly
+terraform validate
+```
+
+Si falla el formato, ejecuta `terraform fmt -recursive`, revisa el diff y repite la comprobación. Puedes configurar `Terraform checks` como check obligatorio en las reglas de protección de `main` tras su primera ejecución; esa protección no la crea este archivo.
+
+### Siguiente fase: despliegue con Jenkins
+
+La separación prevista es **GitHub Actions para CI** y **Jenkins para despliegue**. Jenkins todavía no está configurado: no hay `Jenkinsfile` ni conexión automática entre ambos sistemas. El flujo previsto será comprobar el resultado de CI del commit elegido, generar y revisar su plan, aprobar y aplicar ese mismo plan en AWS.
+
+El proyecto todavía utiliza estado local. Antes de desplegar desde un agente Jenkins hay que preparar un backend remoto privado con bloqueo y migrar el estado existente de forma controlada. El bucket de `s3.tf` almacena el HTML de ejemplo; no es un backend de Terraform. No deben desplegar WSL y Jenkins con estados independientes sobre los mismos recursos.
+
+También será necesario configurar las credenciales AWS en Jenkins, las variables de RDS y SSH, la aprobación de despliegues y la exclusión de ejecuciones simultáneas. Las credenciales temporales de Academy caducan; el agente no hereda automáticamente `~/.aws/credentials` ni las claves de tu WSL. El estado y los planes pueden contener datos sensibles y deben conservarse en almacenamiento privado con acceso controlado.
 
 ## Paso a paso en WSL
 
